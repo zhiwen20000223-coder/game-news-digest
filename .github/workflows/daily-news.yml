@@ -1,0 +1,30 @@
+name: 每日手游行业资讯推送
+
+on:
+  schedule:
+    # 北京时间每天早上 9:00 (UTC 1:00)
+    - cron: "0 1 * * *"
+  workflow_dispatch:  # 允许手动触发测试
+
+jobs:
+  fetch-and-send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 运行资讯抓取 & 邮件发送
+        env:
+          QQ_EMAIL: ${{ secrets.QQ_EMAIL }}
+          QQ_SMTP_AUTH: ${{ secrets.QQ_SMTP_AUTH }}
+        run: python scripts/fetch_and_send.py

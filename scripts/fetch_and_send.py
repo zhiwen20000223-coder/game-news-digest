@@ -11,8 +11,10 @@ import re
 import json
 import smtplib
 import datetime
+from email.header import Header
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 
 import feedparser
 import requests
@@ -194,7 +196,7 @@ def send_email(html_content):
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"🎮 手游行业资讯简报 | {today_str}"
-    msg["From"] = f"游戏资讯助手 <{SENDER}>"
+    msg["From"] = formataddr(("游戏资讯助手", SENDER))
     msg["To"] = RECEIVER
 
     msg.attach(MIMEText(html_content, "html", "utf-8"))

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-每日手游行业资讯简报 v4
+每日手游行业资讯简报 v5
 运行环境: GitHub Actions
-策略: 多源搜索 + 多地区回退 + 日期过滤 → HTML 邮件 → QQ邮箱 SMTP
-v4 新增: ⭐ 黑马新星游戏板块 (Google Play / TapTap / 微信小游戏 / Steam)
+策略: 多源搜索 + 多地区回退 + 日期过滤 + 分级内容过滤 → HTML 邮件 → QQ邮箱 SMTP
+v5 新增: 分级内容过滤器（强非游戏拒绝→强游戏通过→弱游戏需配套→默认拒绝）
 """
 
 import os
@@ -31,53 +31,141 @@ MAX_AGE_DAYS = 30
 MAX_PER_CATEGORY = 8
 MAX_RISING_STARS = 8   # 黑马板块最大条数
 
-# ── 非游戏内容黑名单 ────────────────────────────
-# 标题包含这些关键词且无游戏上下文的，直接过滤
-NON_GAMING_TITLE_PATTERNS = [
-    "车管家", "酒店", "民宿预订", "房地产", "楼盘", "购房",
-    "理财产品", "保险产品", "基金收益", "贷款利率", "信用卡",
-    "快递物流", "外卖配送", "餐饮连锁", "医疗机构", "教育培训",
+# ═══════════════ 分级内容过滤器 ═══════════════
+# 策略：第1关「强非游戏→拒绝」→ 第2关「强游戏→通过」
+#       → 第3关「弱游戏→需配套」→ 第4关「无信号→拒绝」
+
+# ── 第1关：强非游戏特征 ──────────────────────────
+# 命中任一项且无强游戏信号解救 → 立即拒绝
+STRONG_NON_GAMING = [
+    # 体育赛事（纯体育，无游戏关联）
+    "world cup", "worldcup", "世界杯", "olympic", "奥运会",
+    "nba playoffs", "nba finals", "fifa", "欧洲杯",
+    "copa américa", "美洲杯", "亚运会", "football match",
+    "足球赛程", "篮球季后赛", "网球大满贯", "wimbledon",
+    "where to watch", "live stream", "观赛指南",
+    # 反垄断/监管（针对平台公司本身的，非游戏行业政策）
+    "支配地位", "被指控滥用", "拟对其开罚单",
+    "反垄断调查", "反垄断罚款",
+    # 汽车
+    "车管家", "汽车销量榜", "新能源汽车", "充电桩",
+    "车企", "自动驾驶", "智能座舱",
+    # 房产/酒店
+    "酒店预订", "民宿", "房地产", "楼盘", "购房",
+    "锦江酒店", "华住集团", "如家",
+    # 金融产品
+    "理财产品", "保险产品", "基金收益", "贷款利率",
+    "信用卡优惠", "存款利率",
+    # 物流/餐饮/医疗/教育
+    "快递物流", "外卖配送", "餐饮连锁", "医疗机构",
+    "教育培训", "在线教育",
+    # 旅游/租赁/家政
     "旅游景点门票", "机票预订", "租车服务", "家政服务",
-    "汽车销量", "车企", "新能源汽车", "充电桩",
-    "证券交易所", "上市公司季报", "财报发布",
+    # 证券/财报（纯金融，非游戏公司）
+    "证券交易所", "上市公司季报", "股市行情", "a股",
+    # 工业/能源（非游戏）
     "芯片制造", "钢铁行业", "石油化工", "能源转型",
+    "半导体产业", "锂电",
+    # 招聘
     "招聘求职", "猎头", "简历投递",
+    # 财经频道来源（大概率非游戏）
+    "新浪财经", "财经网", "第一财经",
 ]
 
-# 标题或摘要中包含这些词，则视为游戏相关（通过过滤器）
-GAMING_POSITIVE_KEYWORDS = [
-    "游戏", "手游", "电竞", "game", "steam", "taptap",
-    "switch", "playstation", "xbox", "主机", "端游", "页游",
-    "公测", "内测", "版号", "出海", "npc", "副本", "角色",
-    "开发者", "制作人", "工作室", "发行商", "sensor tower",
-    "app store", "google play", "大世界", "开放世界", "rpg",
-    "mmo", "fps", "moba", "卡牌", "slg", "二次元", "原神",
-    "王者荣耀", "和平精英", "崩坏", "米哈游", "腾讯游戏",
-    "网易游戏", "playstation", "nintendo", "epic",
-    "gamelook", "游研社", "机核", "bilibili", "直播",
-    "赛博朋克", "独立游戏", "indie game", "单机游戏",
+# ── 第2关：强游戏信号 ────────────────────────────
+# 命中任一个即确认是游戏资讯，直接放行
+STRONG_GAMING = [
+    "游戏", "手游", "电竞", "公测", "内测", "版号",
+    "steam", "taptap", "端游", "页游", "主机游戏",
+    "原神", "王者荣耀", "和平精英", "崩坏", "米哈游",
+    "腾讯游戏", "网易游戏", "暴雪", "卡普空",
+    "nintendo", "playstation", "xbox",
+    "独立游戏", "indie game", "单机游戏", "二次元游戏",
+    "rpg游戏", "mmo", "fps游戏", "moba", "卡牌游戏",
+    "slg", "大世界", "开放世界", "副本",
+    "gamelook", "游研社", "机核",
+    "sensor tower", "游戏出海", "游戏开发者", "游戏制作人",
+    "赛博朋克", "新游上线", "新游开服", "试玩",
+    "gameplay", "multiplayer", "online game",
+    "roguelike", "roguelite", "模拟经营", "galgame",
+    "元游戏", "meta game", "视觉小说",
+    "游戏发行", "游戏研发", "游戏引擎",
+]
+
+# ── 第3关：弱游戏信号 ────────────────────────────
+# 仅当同时出现配套游戏词汇时才有效（防止反垄断/财经新闻冒充）
+WEAK_GAMING = [
+    "app store", "google play", "play store",
+    "应用商店", "epic games", "发行商", "游戏工作室",
+    "switch", "game", "gamer", "gaming",
+]
+
+# 弱信号配套语境词：弱信号 + 任意一个配套词 = 通过
+WEAK_CONTEXT = [
+    "游戏", "手游", "gaming", "新游", "上线", "公测",
+    "内测", "玩法", "发布", "角色", "关卡", "boss",
+    "氪金", "抽卡", "十连", "开服", "赛季", "更新",
+    "更新公告", "版本", "dlc", "mod", "创意工坊",
+]
+
+# ── 第3关补充：明确非游戏的标题词（直接拒绝，无需配套检查） ──
+# 这些词出现时，即使有弱游戏信号也拒绝
+NON_GAMING_TITLE_OVERRIDE = [
+    "反垄断", "罚款", "股价", "市值蒸发", "涨停", "跌停",
+    "ipo", "上市申请", "融资", "估值",
 ]
 
 
 def is_likely_gaming(title, summary=""):
     """
-    判断一条资讯是否与游戏行业相关。
-    策略：先检查游戏正向关键词 → 再检查非游戏标题黑名单
+    分级过滤：
+    1. 强非游戏特征命中 → 检查有无强游戏信号解救 → 无则拒绝
+    2. 强游戏信号命中 → 通过
+    3. 弱游戏信号命中 → 需配套语境词 → 无则拒绝
+    4. 以上都不满足 → 拒绝（不再保守放行）
     """
     combined = (title + " " + summary).lower()
+    title_lower = title.lower()
 
-    # 游戏正向关键词优先
-    for kw in GAMING_POSITIVE_KEYWORDS:
+    # ═══ 第1关：强非游戏特征 ═══
+    non_gaming_hit = None
+    for pattern in STRONG_NON_GAMING:
+        if pattern.lower() in combined:
+            non_gaming_hit = pattern
+            break
+
+    if non_gaming_hit:
+        # 检查是否有强游戏信号可以"解救"
+        for kw in STRONG_GAMING:
+            if kw.lower() in combined:
+                return True
+        return False
+
+    # ═══ 第2关：强游戏信号 ═══
+    for kw in STRONG_GAMING:
         if kw.lower() in combined:
             return True
 
-    # 标题命中非游戏黑名单 → 过滤
-    for kw in NON_GAMING_TITLE_PATTERNS:
-        if kw in title:
+    # ═══ 第3关补充：标题中明确非游戏词 → 拒绝 ═══
+    for kw in NON_GAMING_TITLE_OVERRIDE:
+        if kw.lower() in title_lower:
             return False
 
-    # 无法判断时放行（保守策略）
-    return True
+    # ═══ 第3关：弱游戏信号 + 配套检查 ═══
+    weak_found = None
+    for kw in WEAK_GAMING:
+        if kw.lower() in combined:
+            weak_found = kw
+            break
+
+    if weak_found:
+        for ck in WEAK_CONTEXT:
+            if ck.lower() in combined:
+                return True
+        return False
+
+    # ═══ 第4关：无任何游戏信号 → 拒绝 ═══
+    return False
 
 # 浏览器 UA，防止被反爬
 HEADERS = {
@@ -199,6 +287,7 @@ def search_google_news(query, max_results=6):
             continue
 
         items = []
+        filtered_non_gaming = 0
         for entry in feed.entries[:max_results]:
             pub_date = entry.get("published_parsed") or entry.get("published")
             parsed = parse_date(pub_date)
@@ -208,6 +297,7 @@ def search_google_news(query, max_results=6):
             raw_title = clean_html(entry.get("title", ""))
             raw_summary = clean_html(entry.get("summary", ""))[:200]
             if not is_likely_gaming(raw_title, raw_summary):
+                filtered_non_gaming += 1
                 continue
 
             items.append(make_item(
@@ -220,10 +310,10 @@ def search_google_news(query, max_results=6):
             ))
 
         if items:
-            print(f"    [{label}] ✅ {n} 条原始，过滤后 {len(items)} 条")
+            print(f"    [{label}] ✅ {n} 条原始，过滤后 {len(items)} 条 (非游戏:{filtered_non_gaming})")
             return items
         else:
-            print(f"    [{label}] {n} 条原始，全部被日期过滤")
+            print(f"    [{label}] {n} 条原始，全部被过滤 (非游戏:{filtered_non_gaming})")
 
     print(f"    ⚠️ 所有地区均无有效结果")
     return []
@@ -245,6 +335,7 @@ def search_game_media():
             continue
 
         count = 0
+        filtered_non_gaming = 0
         for entry in feed.entries[:5]:
             pub_date = entry.get("published_parsed") or entry.get("published")
             parsed = parse_date(pub_date)
@@ -254,6 +345,7 @@ def search_game_media():
             raw_title = clean_html(entry.get("title", ""))
             raw_summary = clean_html(entry.get("summary", ""))[:200]
             if not is_likely_gaming(raw_title, raw_summary):
+                filtered_non_gaming += 1
                 continue
 
             items.append(make_item(
@@ -265,7 +357,7 @@ def search_game_media():
                 date_obj=parsed,
             ))
             count += 1
-        print(f"    {name}: {len(feed.entries)} 条原始，收录 {count} 条")
+        print(f"    {name}: {len(feed.entries)} 条原始，收录 {count} 条 (非游戏:{filtered_non_gaming})")
 
     return items
 
@@ -280,6 +372,7 @@ def search_web_scrape(query):
         if resp.status_code != 200:
             return []
         items = []
+        filtered_non_gaming = 0
         pattern = r'<h2><a\s+href="([^"]+)"[^>]*>([^<]+)</a></h2>'
         matches = re.findall(pattern, resp.text)
         for link, title in matches[:5]:
@@ -287,6 +380,7 @@ def search_web_scrape(query):
             if not title or len(title) < 5:
                 continue
             if not is_likely_gaming(title):
+                filtered_non_gaming += 1
                 continue
             items.append(make_item(
                 title=title,

@@ -31,6 +31,54 @@ MAX_AGE_DAYS = 30
 MAX_PER_CATEGORY = 8
 MAX_RISING_STARS = 8   # 黑马板块最大条数
 
+# ── 非游戏内容黑名单 ────────────────────────────
+# 标题包含这些关键词且无游戏上下文的，直接过滤
+NON_GAMING_TITLE_PATTERNS = [
+    "车管家", "酒店", "民宿预订", "房地产", "楼盘", "购房",
+    "理财产品", "保险产品", "基金收益", "贷款利率", "信用卡",
+    "快递物流", "外卖配送", "餐饮连锁", "医疗机构", "教育培训",
+    "旅游景点门票", "机票预订", "租车服务", "家政服务",
+    "汽车销量", "车企", "新能源汽车", "充电桩",
+    "证券交易所", "上市公司季报", "财报发布",
+    "芯片制造", "钢铁行业", "石油化工", "能源转型",
+    "招聘求职", "猎头", "简历投递",
+]
+
+# 标题或摘要中包含这些词，则视为游戏相关（通过过滤器）
+GAMING_POSITIVE_KEYWORDS = [
+    "游戏", "手游", "电竞", "game", "steam", "taptap",
+    "switch", "playstation", "xbox", "主机", "端游", "页游",
+    "公测", "内测", "版号", "出海", "npc", "副本", "角色",
+    "开发者", "制作人", "工作室", "发行商", "sensor tower",
+    "app store", "google play", "大世界", "开放世界", "rpg",
+    "mmo", "fps", "moba", "卡牌", "slg", "二次元", "原神",
+    "王者荣耀", "和平精英", "崩坏", "米哈游", "腾讯游戏",
+    "网易游戏", "playstation", "nintendo", "epic",
+    "gamelook", "游研社", "机核", "bilibili", "直播",
+    "赛博朋克", "独立游戏", "indie game", "单机游戏",
+]
+
+
+def is_likely_gaming(title, summary=""):
+    """
+    判断一条资讯是否与游戏行业相关。
+    策略：先检查游戏正向关键词 → 再检查非游戏标题黑名单
+    """
+    combined = (title + " " + summary).lower()
+
+    # 游戏正向关键词优先
+    for kw in GAMING_POSITIVE_KEYWORDS:
+        if kw.lower() in combined:
+            return True
+
+    # 标题命中非游戏黑名单 → 过滤
+    for kw in NON_GAMING_TITLE_PATTERNS:
+        if kw in title:
+            return False
+
+    # 无法判断时放行（保守策略）
+    return True
+
 # 浏览器 UA，防止被反爬
 HEADERS = {
     "User-Agent": (
@@ -157,12 +205,17 @@ def search_google_news(query, max_results=6):
             if parsed and not is_recent(parsed):
                 continue
 
+            raw_title = clean_html(entry.get("title", ""))
+            raw_summary = clean_html(entry.get("summary", ""))[:200]
+            if not is_likely_gaming(raw_title, raw_summary):
+                continue
+
             items.append(make_item(
-                title=clean_html(entry.get("title", "")),
+                title=raw_title,
                 link=entry.get("link", ""),
                 published=parsed.strftime("%Y-%m-%d") if parsed else str(entry.get("published", ""))[:25],
                 source=entry.get("source", {}).get("title", "Google News"),
-                summary=clean_html(entry.get("summary", ""))[:200],
+                summary=raw_summary,
                 date_obj=parsed,
             ))
 
@@ -197,12 +250,18 @@ def search_game_media():
             parsed = parse_date(pub_date)
             if parsed and not is_recent(parsed):
                 continue
+
+            raw_title = clean_html(entry.get("title", ""))
+            raw_summary = clean_html(entry.get("summary", ""))[:200]
+            if not is_likely_gaming(raw_title, raw_summary):
+                continue
+
             items.append(make_item(
-                title=clean_html(entry.get("title", "")),
+                title=raw_title,
                 link=entry.get("link", ""),
                 published=parsed.strftime("%Y-%m-%d") if parsed else "",
                 source=name,
-                summary=clean_html(entry.get("summary", ""))[:200],
+                summary=raw_summary,
                 date_obj=parsed,
             ))
             count += 1
@@ -226,6 +285,8 @@ def search_web_scrape(query):
         for link, title in matches[:5]:
             title = clean_html(title)
             if not title or len(title) < 5:
+                continue
+            if not is_likely_gaming(title):
                 continue
             items.append(make_item(
                 title=title,
@@ -558,27 +619,7 @@ def build_html_email(all_news, rising_stars):
     sections_html = ""
     total_items = 0
 
-    # 四大常规板块
-    for category, items in all_news.items():
-        color = colors.get(category, "#333")
-        if not items:
-            items_html = '<li style="color:#999;padding:8px 0;font-size:13px;">😴 本时段暂无相关动态</li>'
-        else:
-            items_html = "".join(build_news_item_html(item, color) for item in items)
-            total_items += len(items)
-
-        sections_html += f"""
-        <div style="margin-bottom:28px;">
-            <h2 style="color:{color};font-size:18px;margin:0 0 12px 0;padding-bottom:10px;border-bottom:2px solid {color};">
-                {category} <span style="font-weight:400;color:#999;font-size:14px;">({len(items)}条)</span>
-            </h2>
-            <ul style="list-style:none;padding:0;margin:0;">
-                {items_html}
-            </ul>
-        </div>
-        """
-
-    # ⭐ 黑马新星游戏板块
+    # ⭐ 黑马新星游戏板块 — 放在最前面
     rising_color = "#F4A300"
     if not rising_stars:
         rising_items_html = '<li style="color:#999;padding:8px 0;font-size:13px;">😴 本时段暂未发现明显黑马产品</li>'
@@ -610,6 +651,26 @@ def build_html_email(all_news, rising_stars):
         </ul>
     </div>
     """
+
+    # 四大常规板块 — 放在黑马后面
+    for category, items in all_news.items():
+        color = colors.get(category, "#333")
+        if not items:
+            items_html = '<li style="color:#999;padding:8px 0;font-size:13px;">😴 本时段暂无相关动态</li>'
+        else:
+            items_html = "".join(build_news_item_html(item, color) for item in items)
+            total_items += len(items)
+
+        sections_html += f"""
+        <div style="margin-bottom:28px;">
+            <h2 style="color:{color};font-size:18px;margin:0 0 12px 0;padding-bottom:10px;border-bottom:2px solid {color};">
+                {category} <span style="font-weight:400;color:#999;font-size:14px;">({len(items)}条)</span>
+            </h2>
+            <ul style="list-style:none;padding:0;margin:0;">
+                {items_html}
+            </ul>
+        </div>
+        """
 
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
